@@ -5,8 +5,24 @@ import discord
 from discord.ext import commands
 import requests
 import ollama
+from dotenv import load_dotenv
+
+load_dotenv()
 
 CONFIG_PATH = "config.json"
+
+# .envに書いた名前と同じにする必要があります
+token = os.getenv("DISCORD_BOT_TOKEN") 
+
+if not token:
+    # config.jsonの中身を確認しに行く
+    with open("config.json", "r") as f:
+        config = json.load(f)
+        token = config.get("discord_bot_token")
+
+if not token:
+    print("Please configure discord_bot_token in config.json or .env")
+    exit(1)
 
 def load_config():
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -216,8 +232,8 @@ async def on_message(message):
             await message.reply(answer, mention_author=False)
 
 if __name__ == "__main__":
-    token = config.get("discord_bot_token")
-    if not token or token == "YOUR_DISCORD_BOT_TOKEN_HERE":
-        print("Please configure discord_bot_token in config.json")
+    # すでに冒頭で取得済みの token 変数をそのまま使う
+    if not token:
+        print("Please configure DISCORD_BOT_TOKEN in .env or config.json")
     else:
         bot.run(token)
