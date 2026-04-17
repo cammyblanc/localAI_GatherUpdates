@@ -1,0 +1,13 @@
+{
+    "youtube_channel_url": "https://youtube.com/@airevolutionx",
+    "discord_webhook_url": "https://discord.com/api/webhooks/1494338418786701352/QX0GECa7x2kcAGgj1I_jmILC0TWVTQiZZSFYCLe2ak-8SdtX14fl1xQMPZkWt3Y-DhPk",
+    "discord_bot_token": "",
+    "discord_bot_channel_id": "1494336602477035682",
+    "dify_api_url": "http://localhost/v1",
+    "dify_api_key": "dataset-W1bPChHkqs2V4seZ65DeH1xO",
+    "dify_dataset_id": "027928a5-f4db-4965-a6eb-6f0e6d9dcc5a",
+    "dify_indexing_technique": "economy",
+    "ollama_host": "http://localhost:11434",
+    "summarize_model": "gpt-oss:20b",
+    "chat_model": "gpt-oss:20b"
+}
