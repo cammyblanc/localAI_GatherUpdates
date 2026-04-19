@@ -4,10 +4,19 @@ import sys
 import requests
 import yt_dlp
 from youtube_transcript_api import YouTubeTranscriptApi
-import ollama
+from openai import OpenAI  # LM Studio(OpenAI互換)用
+import time
+from dotenv import load_dotenv
+
+
+load_dotenv()
 
 CONFIG_PATH = "config.json"
 PROCESSED_VIDEOS_PATH = "processed_videos.json"
+DiscordWebHook = os.getenv("DISCORD_WEBHOOK_URL") 
+
+
+
 
 def load_config():
     if not os.path.exists(CONFIG_PATH):
@@ -26,8 +35,7 @@ def save_processed_videos(video_ids):
     with open(PROCESSED_VIDEOS_PATH, "w", encoding="utf-8") as f:
         json.dump(video_ids, f, ensure_ascii=False, indent=4)
 
-def get_latest_videos(channel_url, max_downloads=3):
-    # Ensure channel_url gets videos instead of tabs if it's an @channel URL
+def get_latest_videos(channel_url, max_downloads=5):
     if '@' in channel_url and not channel_url.endswith('/videos') and not channel_url.endswith('/shorts'):
         channel_url = channel_url.rstrip('/') + '/videos'
         
@@ -48,21 +56,17 @@ def get_latest_videos(channel_url, max_downloads=3):
                 elif entry.get('id'):
                     videos.append(entry)
             
-            # Remove incorrectly captured channel tabs (channel IDs start with UC and are 24 chars)
             videos = [v for v in videos if not (len(v['id']) == 24 and v['id'].startswith('UC'))]
             return videos[:max_downloads]
         return []
 
 def get_transcript(video_id):
     try:
-        # Try to fetch transcript, preferring Japanese, then English
         api = YouTubeTranscriptApi()
         transcript_list = api.list(video_id)
-        # Try to find a playable transcript, fallback to auto-generated
         try:
             transcript = transcript_list.find_transcript(['ja', 'en'])
         except Exception:
-            # Fallback to any transcript
             transcript = transcript_list.find_generated_transcript(['en', 'ja'])
         
         full_text = " ".join([entry.text if hasattr(entry, 'text') else entry['text'] for entry in transcript.fetch()])
@@ -71,8 +75,14 @@ def get_transcript(video_id):
         print(f"Error fetching transcript for {video_id}: {e}")
         return None
 
-def summarize_with_ollama(transcript, model, host):
-    client = ollama.Client(host=host)
+def summarize_with_lmstudio(transcript, model, host):
+    """
+    LM Studioのローカルサーバー(OpenAI互換)を使用して要約を行います。
+    hostの例: http://localhost:1234/v1
+    """
+    # LM StudioはAPIキーを必要としませんが、クライアント初期化には何かしらの文字列が必要です
+    client = OpenAI(base_url=host, api_key="lm-studio")
+    
     prompt = (
         "以下のYouTube動画のトランスクリプトを注意深く読み、内容をトピックごとに分類してそれぞれ日本語で要約してください。\n\n"
         "【要約のルール】\n"
@@ -82,19 +92,19 @@ def summarize_with_ollama(transcript, model, host):
         f"トランスクリプト:\n{transcript}"
     )
     
-    # We may need to truncate the transcript if it's too long, but we'll try sending as is
-    # Gemma handles typical 8k context, which is roughly 10-20 min speech.
-    print(f"Calling Ollama with model: {model}")
+    print(f"Calling LM Studio with model: {model} at {host}")
     try:
-        response = client.chat(model=model, messages=[
-            {
-                'role': 'user',
-                'content': prompt
-            }
-        ])
-        return response['message']['content']
+        response = client.chat.completions.create(
+            model=model,  # LM Studioでロードしているモデル名、または指定のID
+            messages=[
+                {"role": "system", "content": "あなたは優秀な要約アシスタントです。"},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+        )
+        return response.choices[0].message.content
     except Exception as e:
-        print(f"Ollama error: {e}")
+        print(f"LM Studio error: {e}")
         return None
 
 def send_to_discord(webhook_url, title, video_url, summary):
@@ -102,15 +112,12 @@ def send_to_discord(webhook_url, title, video_url, summary):
         print("Discord webhook URL not configured.")
         return
     
-    # Discord limitation of 2000 chars per message, might need splitting or sending as embed
     content = f"**【新着要約】{title}**\n{video_url}\n\n{summary}"
     
     if len(content) > 1900:
         content = content[:1900] + "\n... (以降省略)"
     
-    payload = {
-        "content": content
-    }
+    payload = {"content": content}
     requests.post(webhook_url, json=payload)
 
 def push_to_dify(config, title, video_id, summary):
@@ -119,11 +126,8 @@ def push_to_dify(config, title, video_id, summary):
     dataset_id = config.get("dify_dataset_id")
     indexing_technique = config.get("dify_indexing_technique", "economy")
     
-    if not api_key or api_key == "YOUR_DIFY_DATASET_API_KEY_HERE":
-        print("Dify API key not configured. Skipping Dify push.")
-        return
-    if not dataset_id or not api_url:
-        print("Dify dataset_id or api_url not configured. Skipping Dify push.")
+    if not api_key or not api_url or not dataset_id:
+        print("🔴 Dify configuration missing.")
         return
         
     url = f"{api_url}/datasets/{dataset_id}/document/create_by_text"
@@ -132,30 +136,25 @@ def push_to_dify(config, title, video_id, summary):
         "Content-Type": "application/json"
     }
     
-    # We combine title and summary as the knowledge content
     doc_text = f"Title: {title}\nVideo URL: https://youtube.com/watch?v={video_id}\n\nSummary:\n{summary}"
-    
     payload = {
         "name": f"YouTube - {title}",
         "text": doc_text,
         "indexing_technique": indexing_technique,
-        "process_rule": {
-            "mode": "automatic"
-        }
+        "process_rule": {"mode": "automatic"}
     }
     
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=60)
         if response.status_code in (200, 201):
-            doc_id = response.json().get("document", {}).get("id", "unknown")
-            print(f"Successfully uploaded to Dify. doc_id={doc_id}")
+            print(f"🟢 Successfully uploaded to Dify.")
+            return True
         else:
-            print(f"Failed to upload to Dify (HTTP {response.status_code}): {response.text}")
-    except requests.exceptions.ConnectionError as e:
-        print(f"Dify connection error: {e}")
+            print(f"🔴 Dify API failed: {response.text}")
     except Exception as e:
-        print(f"Dify upload error: {e}")
+        print(f"❌ Dify error: {e}")
 
+    return False
 
 def process_latest_videos():
     config = load_config()
@@ -173,28 +172,23 @@ def process_latest_videos():
             
         print(f"Processing new video: {title} ({video_id})")
         
-        # 1. Get Transcript
         transcript = get_transcript(video_id)
         if not transcript:
             continue
             
-        # 2. Summarize
-        summary = summarize_with_ollama(
+        # LM Studio向けの設定を使用
+        summary = summarize_with_lmstudio(
             transcript=transcript, 
-            model=config.get("summarize_model", "gemma2"),
-            host=config.get("ollama_host", "http://localhost:11434")
+            model=config.get("summarize_model", "model-identifier"), # LM Studioでロード中のモデル
+            host=config.get("lmstudio_host", "http://localhost:1234/v1")
         )
         
         if not summary:
             continue
             
-        # 3. Send to Discord Webhook (optional, but good for active push)
-        send_to_discord(config.get("discord_webhook_url"), title, video_url, summary)
-        
-        # 4. Push to Dify Database
+        send_to_discord(DiscordWebHook, title, video_url, summary)
         push_to_dify(config, title, video_id, summary)
         
-        # Mark as processed
         processed_videos.append(video_id)
         save_processed_videos(processed_videos)
 
