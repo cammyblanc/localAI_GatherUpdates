@@ -77,10 +77,11 @@ def get_transcript(video_id):
 
 def summarize_with_lmstudio(transcript, model, host):
     """
-    LM Studioのローカルサーバー(OpenAI互換)を使用して要約を行います。
+    lms.exe (LM Studio CLI) が起動したOpenAI互換サーバーを使用して要約を行います。
+    localLLM_prep.bat で「lms server start」により起動済みのサーバーに接続します。
     hostの例: http://localhost:1234/v1
     """
-    # LM StudioはAPIキーを必要としませんが、クライアント初期化には何かしらの文字列が必要です
+    # lms.exe が起動したサーバーはAPIキー不要ですが、クライアント初期化には文字列が必要です
     client = OpenAI(base_url=host, api_key="lm-studio")
     
     prompt = (
@@ -105,6 +106,37 @@ def summarize_with_lmstudio(transcript, model, host):
         return response.choices[0].message.content
     except Exception as e:
         print(f"LM Studio error: {e}")
+        return None
+
+def summarize_briefly_with_lmstudio(transcript, model, host):
+    """
+    Discord投稿用に非常に簡潔な要約を行います。
+    """
+    client = OpenAI(base_url=host, api_key="lm-studio")
+    
+    prompt = (
+        "以下のYouTube動画のトランスクリプトを読み、内容を非常に簡潔に要約してください。\n\n"
+        "【要約のルール】\n"
+        "1. 形式は以下を厳守してください：\n"
+        "   - トピック（動画の主要なテーマを一行で）\n"
+        "   - 要約（3～5個の箇条書き）\n"
+        "2. 全体は日本語で出力してください。\n\n"
+        f"トランスクリプト:\n{transcript}"
+    )
+    
+    print(f"Calling LM Studio for brief summary with model: {model}")
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "あなたは需要な要点を損なわず簡潔に要約を作成するアシスタントです。"},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.7,
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"LM Studio brief error: {e}")
         return None
 
 def send_to_discord(webhook_url, title, video_url, summary):
@@ -176,18 +208,25 @@ def process_latest_videos():
         if not transcript:
             continue
             
-        # LM Studio向けの設定を使用
-        summary = summarize_with_lmstudio(
-            transcript=transcript, 
-            model=config.get("summarize_model", "model-identifier"), # LM Studioでロード中のモデル
-            host=config.get("lmstudio_host", "http://localhost:1234/v1")
+        # Dify用の詳細な要約
+        summary_detailed = summarize_with_lmstudio(
+            transcript=transcript,
+            model=config.get("chat_model", "google/gemma-4-e4b"),
+            host=config.get("llm_host", "http://localhost:1234/v1")
         )
         
-        if not summary:
+        # Discord用の簡潔な要約
+        summary_brief = summarize_briefly_with_lmstudio(
+            transcript=transcript,
+            model=config.get("chat_model", "google/gemma-4-e4b"),
+            host=config.get("llm_host", "http://localhost:1234/v1")
+        )
+        
+        if not summary_detailed or not summary_brief:
             continue
             
-        send_to_discord(DiscordWebHook, title, video_url, summary)
-        push_to_dify(config, title, video_id, summary)
+        send_to_discord(DiscordWebHook, title, video_url, summary_brief)
+        push_to_dify(config, title, video_id, summary_detailed)
         
         processed_videos.append(video_id)
         save_processed_videos(processed_videos)

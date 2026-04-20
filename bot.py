@@ -59,10 +59,10 @@ def retrieve_from_dify(query):
         payload = {
             "query": query,
             "retrieval_model": {
-                "search_method": "keyword_search",
+                "search_method": "semantic_search",  # high_qualityデータセット用（ベクトル検索）
                 "top_k": 10,
-                "reranking_enable": False,        # 追加：リランク機能をオフに設定
-                "score_threshold_enabled": False  # 追加：スコア制限をオフに設定
+                "reranking_enable": False,
+                "score_threshold_enabled": False
             }
         }
 
@@ -99,12 +99,23 @@ async def generate_answer_with_lm_studio(query, context):
     if context:
         prompt = (
             "あなたはAIに関する最新情報を提供するAIアシスタントです。\n"
-            "以下のコンテキストを参考にして、ユーザーの質問に日本語で回答してください。\n\n"
+            "以下のコンテキストを参考にして、ユーザーの質問に日本語で回答してください。\n"
+            "回答は以下の形式を厳守し、非常に簡潔にまとめてください。\n\n"
+            "【形式】\n"
+            "- トピック（回答の主要なテーマを一行で）\n"
+            "- 内容（3～5個の箇条書き）\n\n"
             f"【コンテキスト】\n{context}\n\n"
             f"【ユーザーの質問】\n{query}"
         )
     else:
-        prompt = f"あなたはAIアシスタントです。日本語で回答してください。\n\n【ユーザーの質問】\n{query}"
+        prompt = (
+            "あなたはAIアシスタントです。日本語で回答してください。\n"
+            "回答は以下の形式を厳守し、非常に簡潔にまとめてください。\n\n"
+            "【形式】\n"
+            "- トピック（回答の主要なテーマを一行で）\n"
+            "- 内容（3～5個の箇条書き）\n\n"
+            f"【ユーザーの質問】\n{query}"
+        )
     
     # LM Studio(OpenAI互換)クライアントの初期化
     client = AsyncOpenAI(base_url=host, api_key="lm-studio") # APIキーは任意でOK

@@ -3,7 +3,7 @@
     "discord_webhook_url": "",
     "discord_bot_token": "",
     "discord_bot_channel_id": "1494336602477035682",
-    "dify_indexing_technique": "economy",
+    "dify_indexing_technique": "high_quality",
     "llm_host": "http://localhost:1234/v1",
     "chat_model": "google/gemma-4-e4b", 
     "dify_api_url": "http://localhost/v1",
