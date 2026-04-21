@@ -6,14 +6,14 @@ import discord
 from discord.ext import commands
 import requests
 # ollama の代わりに openai をインポート
-from openai import AsyncOpenAI 
+from openai import AsyncOpenAI
 from dotenv import load_dotenv
 import time
 
 load_dotenv()
 
 CONFIG_PATH = "config.json"
-token = os.getenv("DISCORD_BOT_TOKEN") 
+token = os.getenv("DISCORD_BOT_TOKEN")
 
 if not token:
     with open(CONFIG_PATH, "r") as f:
@@ -44,7 +44,7 @@ def retrieve_from_dify(query):
     api_url = config.get("dify_api_url")
     api_key = config.get("dify_api_key")
     dataset_id = config.get("dify_dataset_id")
-    
+
     if not api_url or not api_key or not dataset_id:
         return None
 
@@ -55,7 +55,7 @@ def retrieve_from_dify(query):
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
-        
+
         payload = {
             "query": query,
             "retrieval_model": {
@@ -68,7 +68,7 @@ def retrieve_from_dify(query):
 
         print(f"🔍 Difyへのリクエストクエリ: '{query}'")
         response = requests.post(url, headers=headers, json=payload, timeout=15)
-        
+
         if response.status_code == 200:
             data = response.json()
             records = data.get("records", [])
@@ -86,11 +86,10 @@ def retrieve_from_dify(query):
         else:
             # ここで詳細なエラー内容を表示するようにしておきます
             print(f"❌ Dify APIエラー: {response.status_code} - {response.text}")
-            
+
     except Exception as e:
         print(f"❌ Dify通信例外: {e}")
     return None
-
 
 async def generate_answer_with_lm_studio(query, context):
     host = config.get("llm_host", "http://localhost:1234/v1")
@@ -100,7 +99,7 @@ async def generate_answer_with_lm_studio(query, context):
         prompt = (
             "あなたはAIに関する最新情報を提供するAIアシスタントです。\n"
             "以下のコンテキストを参考にして、ユーザーの質問に日本語で回答してください。\n"
-            "回答は以下の形式を厳守し、非常に簡潔にまとめてください。\n\n"
+            "回答は以下の形式を厳守し、回答の最大文字数は1800語以内で非常に簡潔にまとめてください。\n\n"
             "【形式】\n"
             "- トピック（回答の主要なテーマを一行で）\n"
             "- 内容（3～5個の箇条書き）\n\n"
@@ -110,13 +109,13 @@ async def generate_answer_with_lm_studio(query, context):
     else:
         prompt = (
             "あなたはAIアシスタントです。日本語で回答してください。\n"
-            "回答は以下の形式を厳守し、非常に簡潔にまとめてください。\n\n"
+            "回答は以下の形式を厳守し、回答の最大文字数は1800語以内にまとめてください。\n\n"
             "【形式】\n"
             "- トピック（回答の主要なテーマを一行で）\n"
             "- 内容（3～5個の箇条書き）\n\n"
             f"【ユーザーの質問】\n{query}"
         )
-    
+
     # LM Studio(OpenAI互換)クライアントの初期化
     client = AsyncOpenAI(base_url=host, api_key="lm-studio") # APIキーは任意でOK
 
@@ -132,35 +131,42 @@ async def generate_answer_with_lm_studio(query, context):
 
 @bot.event
 async def on_message(message):
-    if message.author == bot.user:
-        return
-
     # メンションされた場合のみ反応
     if bot.user in message.mentions:
-        # 正規表現でメンション部分（<@...>）を完全に除去
-        query = re.sub(r'<@!?\d+>', '', message.content).strip()
-        
-        if not query:
-            return
-            
-        async with message.channel.typing():
-            context = retrieve_from_dify(query)
-            
-            if context is None:
-                print("ℹ️ Difyからコンテキストが返されませんでした")
-                await message.reply("📚 ナレッジに情報がないため、一般知識で回答します。", mention_author=False)
-            
-            answer = await generate_answer_with_lm_studio(query, context)
-            
-            # Discordの文字数制限対策
-            if len(answer) > 2000:
-                answer = answer[:1996] + "..."
+        raw_query = re.sub(r'<@!?\d+>', '', message.content).strip()
 
-            await message.reply(answer, mention_author=False)
+        if not raw_query:
+            return
+
+        # 複数のトピックがある場合、カンマや句点、または「など」「も」などの一般的な区切り文字で分割を試みる。
+        # これは簡易的なパーサーであり、より複雑な文脈理解には限界があります。
+        topics = [t.strip() for t in re.split(r'[,.]|\b(also|and)\s', raw_query) if t and t.strip()]
+
+        if not topics:
+            # 分割に失敗した場合、元のクエリ全体を単一のトピックとして扱う
+            topics = [raw_query]
+
+        results = []
+        for query in topics:
+            async with message.channel.typing():
+                context = retrieve_from_dify(query)
+
+                if context is None:
+                    print(f"ℹ️ Difyからコンテキストが返されませんでした (トピック: {query[:30]}...)")
+                    results.append(f"\n\n--- トピック: {query} ---\n📚 ナレッジに情報がないため、一般知識で回答します。")
+                else:
+                    answer = await generate_answer_with_lm_studio(query, context)
+
+                    # Discordの文字数制限対策
+                    if len(answer) > 2000:
+                        answer = answer[:1996] + "..."
+                    results.append(f"\n\n--- トピック: {query} ---\n{answer}")
+
+        final_response = "\n\n".join(results)
+        await message.reply(final_response, mention_author=False)
 
 if __name__ == "__main__":
     if not token:
         print("Please configure DISCORD_BOT_TOKEN")
     else:
         bot.run(token)
-        

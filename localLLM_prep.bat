@@ -37,4 +37,11 @@ echo ==========================================
 echo すべてのローカルAI環境が整いました！
 echo ==========================================
 start http://localhost/install
-pause
+
+:: ここで PowerShell を起動します
+:: -NoExit を付けると、PowerShell 起動時のスクリプト実行後も閉じずに残ります
+cd ..\..
+uv run .\youtube_processor.py
+uv run .\bot.py
+
+powershell -NoExit
