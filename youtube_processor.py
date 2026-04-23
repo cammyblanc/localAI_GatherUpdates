@@ -39,7 +39,7 @@ def get_latest_videos(channel_url, max_downloads=5):
     if '@' in channel_url and not channel_url.endswith('/videos') and not channel_url.endswith('/shorts'):
         channel_url = channel_url.rstrip('/') + '/videos'
         
-    print(f"Fetching latest videos from {channel_url}...")
+    print(f"最新動画採ってきます！ ココ--> {channel_url}")
     ydl_opts = {
         'extract_flat': True,
         'playlist_items': f'1-{max_downloads}',
@@ -202,7 +202,7 @@ def process_latest_videos():
         video_url = f"https://youtube.com/watch?v={video_id}"
         
         if video_id in processed_videos:
-            check_updates = 'no post detected'
+            check_updates = '最新動画の追加なしでした！'
             continue
             
         print(f"Processing new video: {title} ({video_id})")
