@@ -116,6 +116,7 @@ def summarize_briefly_with_lmstudio(transcript, model, host):
     
     prompt = (
         "以下のYouTube動画のトランスクリプトを読み、内容を非常に簡潔に要約してください。\n\n"
+        "回答の最大文字数は1800語以内で非常に簡潔にまとめてください。\n\n"
         "【要約のルール】\n"
         "1. 形式は以下を厳守してください：\n"
         "   - トピック（動画の主要なテーマを一行で）\n"
@@ -192,6 +193,7 @@ def process_latest_videos():
     config = load_config()
     processed_videos = load_processed_videos()
     
+    check_updates = []
     videos = get_latest_videos(config["youtube_channel_url"])
     
     for video in videos:
@@ -200,6 +202,7 @@ def process_latest_videos():
         video_url = f"https://youtube.com/watch?v={video_id}"
         
         if video_id in processed_videos:
+            check_updates = 'no post detected'
             continue
             
         print(f"Processing new video: {title} ({video_id})")
@@ -230,6 +233,7 @@ def process_latest_videos():
         
         processed_videos.append(video_id)
         save_processed_videos(processed_videos)
+    print(check_updates)
 
 if __name__ == "__main__":
     process_latest_videos()

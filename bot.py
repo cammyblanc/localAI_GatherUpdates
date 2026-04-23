@@ -6,7 +6,8 @@ import discord
 from discord.ext import commands
 import requests
 # ollama の代わりに openai をインポート
-from openai import AsyncOpenAI
+import subprocess
+# ... (rest of imports)
 from dotenv import load_dotenv
 import time
 
@@ -128,18 +129,44 @@ async def generate_answer_with_lm_studio(query, context):
         return response.choices[0].message.content
     except Exception as e:
         return f"LM Studioとの通信エラー: {e}"
-
+	
 @bot.event
 async def on_message(message):
     # メンションされた場合のみ反応
-    if bot.user in message.mentions:
-        raw_query = re.sub(r'<@!?\d+>', '', message.content).strip()
+    if bot.user not in message.mentions:
+        return
+
+    raw_content = re.sub(r'<@!?\d+>', '', message.content).strip()
+
+    # コマンド実行のチェック：メッセージが /update で始まるかを確認する。
+    COMMAND_TRIGGER = "/update"
+    if raw_content.lower().startswith(COMMAND_TRIGGER):
+        # 引数を無視し、固定のコマンドを実行する
+        command_str = "uv run youtube_processor.py"
+        print(f"🚀 受信したコマンド実行リクエスト: {command_str}")
+        await message.reply("🤖 ローカルスクリプトを実行中です。少々お待ちください...")
+
+        try:
+            # subprocessを使って外部コマンドを非同期で実行する
+            result = await asyncio.to_thread(subprocess.run, command_str, shell=True, capture_output=True, text=True, check=True)
+
+            full_output = result.stdout + (f"\n[STDOUT]\n{result.stderr}" if result.stderr else "") # stderrはエラーログとして扱うことが多いが、ここでは出力と合わせて渡す。
+
+            await message.reply(f"✅ コマンド実行が完了しました。\n\n```\n{full_output}\n```")
+
+        except subprocess.CalledProcessError as e:
+            error_msg = f"❌ コマンドの実行中にエラーが発生しました (リターンコード {e.returncode}):\n```\n{e.stdout}{e.stderr}\n```"
+            await message.reply(error_msg)
+        except Exception as e:
+            await message.reply(f"❌ スクリプト実行時に予期せぬ例外が発生しました: {e}")
+    # 通常のクエリ処理 (元のロジックをここに続ける)
+    else:
+        raw_query = raw_content
 
         if not raw_query:
             return
 
-        # 複数のトピックがある場合、カンマや句点、または「など」「も」などの一般的な区切り文字で分割を試みる。
-        # これは簡易的なパーサーであり、より複雑な文脈理解には限界があります。
+        # 複数のトピックがある場合、カンマや句点、または「など」などの一般的な区切り文字で分割を試みる。
         topics = [t.strip() for t in re.split(r'[,.]|\b(also|and)\s', raw_query) if t and t.strip()]
 
         if not topics:
@@ -164,6 +191,7 @@ async def on_message(message):
 
         final_response = "\n\n".join(results)
         await message.reply(final_response, mention_author=False)
+
 
 if __name__ == "__main__":
     if not token:
