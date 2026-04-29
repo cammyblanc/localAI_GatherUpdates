@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import argparse
 import requests
 import yt_dlp
 from youtube_transcript_api import YouTubeTranscriptApi
@@ -85,10 +86,13 @@ def summarize_with_lmstudio(transcript, model, host):
     client = OpenAI(base_url=host, api_key="lm-studio")
     
     prompt = (
-        "以下のYouTube動画のトランスクリプトを注意深く読み、内容をトピックごとに分類してそれぞれ日本語で要約してください。\n\n"
-        "【要約のルール】\n"
-        "1. 見出しは「## トピック名」とする\n"
-        "2. 各トピックの内容は箇条書きを交えて分かりやすく記載する\n"
+        "以下のYouTube動画のトランスクリプトを注意深く読み、以下を実行してください。\n\n"
+        "【タスク】\n"
+        "1. トランスクリプト全体に含まれる１つもしくは２つ以上の主要な論点を特定する\n"
+        "2. 特定した主要な論点の１つずつについて、中心となる製品・サービス・発明・ブレークスルーを表す固有名詞や表現と、それで何が実現されるかを特定する\n"
+        "3. 論点１つずつの製品・サービス・発明・ブレークスルーを表す固有名詞や表現と実現される内容をまとめた1文を作成し、トピックと扱う\n"
+        "4. トピックは「## トピック名」と記述する\n"
+        "5. それぞれのトピックに含まれる主要な製品・サービス・発明・ブレークスルーやそれによって実現される成果物について、網羅的かつ簡潔な文章を箇条書きを交えて作成する\n"
         "3. 全体は日本語で出力する\n\n"
         f"トランスクリプト:\n{transcript}"
     )
@@ -98,7 +102,7 @@ def summarize_with_lmstudio(transcript, model, host):
         response = client.chat.completions.create(
             model=model,  # LM Studioでロードしているモデル名、または指定のID
             messages=[
-                {"role": "system", "content": "あなたは優秀な要約アシスタントです。"},
+                {"role": "system", "content": "あなたは文章全体から主要なトピックを特定し、各トピックについて重要な論点をまとめる優秀な報告書作成者です。"},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.7,
@@ -124,16 +128,16 @@ def summarize_briefly_with_lmstudio(transcript, model, host):
         "2. 全体は日本語で出力してください。\n\n"
         f"トランスクリプト:\n{transcript}"
     )
-    
+        
     print(f"Calling LM Studio for brief summary with model: {model}")
     try:
         response = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": "あなたは需要な要点を損なわず簡潔に要約を作成するアシスタントです。"},
+                {"role": "system", "content": "あなたは文章全体から主要なトピックを特定し、各トピックについて重要な論点をまとめる優秀な報告書作成者です。"},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.7,
+            temperature=0.5,
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -189,51 +193,82 @@ def push_to_dify(config, title, video_id, summary):
 
     return False
 
-def process_latest_videos():
+def get_channel_urls(config):
+    urls = []
+    list_file_path = "list_youtube.txt"
+    if not os.path.exists(list_file_path):
+        list_file_path = "list_youtube"
+        
+    if os.path.exists(list_file_path):
+        with open(list_file_path, "r", encoding="utf-8") as f:
+            for line in f:
+                url = line.strip()
+                if url and not url.startswith("#"):
+                    urls.append(url)
+    
+    # フォールバック: list_youtubeファイルが存在しない、または空の場合はconfigから取得
+    if not urls and config.get("youtube_channel_url"):
+        urls.append(config.get("youtube_channel_url"))
+        
+    return urls
+
+def process_latest_videos(max_downloads=5):
     config = load_config()
     processed_videos = load_processed_videos()
     
-    check_updates = []
-    videos = get_latest_videos(config["youtube_channel_url"])
-    
-    for video in videos:
-        video_id = video['id']
-        title = video['title']
-        video_url = f"https://youtube.com/watch?v={video_id}"
+    channel_urls = get_channel_urls(config)
+    if not channel_urls:
+        print("処理するYouTubeチャンネルが見つかりませんでした。'list_youtube' ファイルを作成してURLを記述してください。")
+        return
+
+    for channel_url in channel_urls:
+        print(f"\n=== チャンネル処理開始: {channel_url} ===")
+        check_updates = '最新動画の追加なしでした！'
+        videos = get_latest_videos(channel_url, max_downloads=max_downloads)
         
-        if video_id in processed_videos:
-            check_updates = '最新動画の追加なしでした！'
-            continue
+        for video in videos:
+            video_id = video['id']
+            title = video['title']
+            video_url = f"https://youtube.com/watch?v={video_id}"
             
-        print(f"Processing new video: {title} ({video_id})")
-        
-        transcript = get_transcript(video_id)
-        if not transcript:
-            continue
+            if video_id in processed_videos:
+                continue
+                
+            check_updates = '新着動画が見つかり、処理を完了しました！'
+            print(f"Processing new video: {title} ({video_id})")
             
-        # Dify用の詳細な要約
-        summary_detailed = summarize_with_lmstudio(
-            transcript=transcript,
-            model=config.get("chat_model", "google/gemma-4-e4b"),
-            host=config.get("llm_host", "http://localhost:1234/v1")
-        )
-        
-        # Discord用の簡潔な要約
-        summary_brief = summarize_briefly_with_lmstudio(
-            transcript=transcript,
-            model=config.get("chat_model", "google/gemma-4-e4b"),
-            host=config.get("llm_host", "http://localhost:1234/v1")
-        )
-        
-        if not summary_detailed or not summary_brief:
-            continue
+            transcript = get_transcript(video_id)
+            if not transcript:
+                continue
+                
+            # Dify用の詳細な要約
+            summary_detailed = summarize_with_lmstudio(
+                transcript=transcript,
+                model=config.get("chat_model", "google/gemma-4-e4b"),
+                host=config.get("llm_host", "http://localhost:1234/v1")
+            )
             
-        send_to_discord(DiscordWebHook, title, video_url, summary_brief)
-        push_to_dify(config, title, video_id, summary_detailed)
-        
-        processed_videos.append(video_id)
-        save_processed_videos(processed_videos)
-    print(check_updates)
+            # Discord用の簡潔な要約
+            summary_brief = summarize_briefly_with_lmstudio(
+                transcript=transcript,
+                model=config.get("chat_model", "google/gemma-4-e4b"),
+                host=config.get("llm_host", "http://localhost:1234/v1")
+            )
+            
+            if not summary_detailed or not summary_brief:
+                continue
+                
+            send_to_discord(DiscordWebHook, title, video_url, summary_brief)
+            push_to_dify(config, title, video_id, summary_detailed)
+            
+            processed_videos.append(video_id)
+            save_processed_videos(processed_videos)
+            
+        print(check_updates)
 
 if __name__ == "__main__":
-    process_latest_videos()
+    parser = argparse.ArgumentParser(description="Process latest YouTube videos.")
+    parser.add_argument("-d", "--max-downloads", type=int, default=5, help="Maximum number of videos to process per channel (default: 5)")
+    args = parser.parse_args()
+    
+    process_latest_videos(max_downloads=args.max_downloads)
